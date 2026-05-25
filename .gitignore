@@ -1,0 +1,13 @@
+node_modules/
+*.zip
+tiles_reference.png
+tiles_ref2.png
+tiles_ref3.png
+tiles_ref4.png
+items_ref.png
+items_ref2.png
+items_full.png
+mario_small_ref.png
+NewProject/library/
+NewProject/local/
+NewProject/temp/
