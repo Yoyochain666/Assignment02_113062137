@@ -61,25 +61,107 @@ window.Game = cc.Class({
 
     // ── background / sky ──────────────────────────────────────────────────
     _buildBackground: function(canvasNode) {
-        var bg = new cc.Node('sky');
-        bg.anchorX = 0.5; bg.anchorY = 0.5;
-        bg.x = 0; bg.y = 0;
-        bg.width = 4000;
-        bg.height = 3000;
-        var spr = bg.addComponent(cc.Sprite);
-        spr.sizeMode = cc.Sprite.SizeMode.CUSTOM;
-        spr.trim = false;
-        // Use any tile sprite as a solid fill (we'll tint it)
-        var fallback = SPR.getFrame('tiles_2.png') || SPR.getFrame('tiles_9.png');
-        if (fallback) spr.spriteFrame = fallback;
-        canvasNode.addChild(bg, -10);
-        this._bgNode = bg;
-        this._bgSprite = spr;
-        this._setBgColor(92, 148, 252);
+        // ── Layer 3a: gradient sky (Graphics; doesn't scroll)
+        var sky = new cc.Node('sky');
+        sky.anchorX = 0.5; sky.anchorY = 0.5;
+        sky.x = 0; sky.y = 0;
+        var g = sky.addComponent(cc.Graphics);
+        var W = 4000, H = 3000;
+        var steps = 20;
+        var top    = [120, 200, 255];   // light sky
+        var bottom = [40,  100, 200];   // deep blue
+        var stripH = H / steps;
+        for (var i = 0; i < steps; i++) {
+            var t = i / (steps - 1);
+            var r = Math.floor(top[0] + (bottom[0] - top[0]) * t);
+            var gg = Math.floor(top[1] + (bottom[1] - top[1]) * t);
+            var b = Math.floor(top[2] + (bottom[2] - top[2]) * t);
+            g.fillColor = cc.color(r, gg, b);
+            var y = H / 2 - (i + 1) * stripH;
+            g.rect(-W/2, y, W, stripH + 1);
+            g.fill();
+        }
+        canvasNode.addChild(sky, -20);
+        this._bgNode = sky;
+
+        // ── Layer 3b: cloud parallax (scrolls at 0.3x camera)
+        var clouds = new cc.Node('clouds');
+        clouds.anchorX = 0; clouds.anchorY = 1;
+        clouds.x = -CFG.W / 2;
+        clouds.y = CFG.H / 2 - CFG.HUD_H;
+        canvasNode.addChild(clouds, -10);
+        this._cloudLayer = clouds;
+
+        // ── Distant rounded mountain ridge near horizon ──
+        // clouds layer is at canvas (-640, 288). Bottom of game area is at
+        // canvas y = -CFG.H/2 = -360, which in clouds-local is -648.
+        // Put ridge bottom near the ground (canvas y ~ -296 = clouds-local -584).
+        var ridge = new cc.Node('ridge');
+        ridge.anchorX = 0; ridge.anchorY = 0;
+        ridge.x = 0; ridge.y = -584;
+        var ridgeG = ridge.addComponent(cc.Graphics);
+        clouds.addChild(ridge);
+        var seedR = 7919;
+        function rndR() { seedR = (seedR * 9301 + 49297) % 233280; return seedR / 233280; }
+        // Three layers, back→front, deepest blue tucked at the back
+        var ridgeColors = [
+            cc.color( 80, 140, 190),   // back / deepest
+            cc.color(110, 160, 205),
+            cc.color(140, 185, 220),   // front / lightest
+        ];
+        var ridgeWidth = 7000;
+        var BOTTOM = -1000;     // far below visible area to cover pits
+        function roundedHill(g, x, w, h) {
+            var bodyH = Math.max(0, h - w / 2);
+            var cx = x + w / 2;
+            g.moveTo(x, BOTTOM);
+            g.lineTo(x, bodyH);
+            g.arc(cx, bodyH, w / 2, Math.PI, 0, false);
+            g.lineTo(x + w, BOTTOM);
+            g.close();
+            g.fill();
+        }
+        for (var L = 0; L < ridgeColors.length; L++) {
+            ridgeG.fillColor = ridgeColors[L];
+            var x = -50;
+            while (x < ridgeWidth) {
+                var w = 80 + Math.floor(rndR() * 80);                  // 80–160 wide
+                var h = 30 + Math.floor(rndR() * (60 + (2-L)*40));     // back layer taller
+                roundedHill(ridgeG, x, w, h);
+                x += Math.floor(w * 0.55) + Math.floor(rndR() * 10);   // overlap by ~45%
+            }
+        }
+
+        var cloudFrame = SPR.getFrame('cloud') || SPR.getFrame('cloud.png');
+        // deterministic pseudo-random (seeded) so layout stays stable between frames
+        var seed = 12345;
+        function rnd() { seed = (seed * 9301 + 49297) % 233280; return seed / 233280; }
+        var totalW = 6500;
+        var x = 30;
+        while (x < totalW) {
+            var y = 20 + rnd() * 200;          // y between 20 and 220
+            var sz = 0.65 + rnd() * 0.9;        // scale 0.65x ~ 1.55x
+            var w = Math.floor(96 * sz);
+            var h = Math.floor(32 * sz);
+            var c = new cc.Node('cloud');
+            c.anchorX = 0; c.anchorY = 1;
+            c.x = x; c.y = -y;
+            c.width = w; c.height = h;
+            c.opacity = 180 + Math.floor(rnd() * 75);   // 180~255 alpha
+            var s = c.addComponent(cc.Sprite);
+            s.sizeMode = cc.Sprite.SizeMode.CUSTOM;
+            s.trim = false;
+            if (cloudFrame) s.spriteFrame = cloudFrame;
+            clouds.addChild(c);
+            x += 120 + Math.floor(rnd() * 280);   // gap 120-400 px
+        }
     },
 
     _setBgColor: function(r, g, b) {
-        this._bgNode.color = cc.color(r, g, b);
+        // gradient is fixed; just toggle cloud visibility for menu vs game
+        if (this._cloudLayer) {
+            this._cloudLayer.active = (r === 92 && g === 148 && b === 252);
+        }
     },
 
     // ── HUD ───────────────────────────────────────────────────────────────
@@ -278,8 +360,8 @@ window.Game = cc.Class({
         level.init(wn, this);
         this._level = level;
 
-        // Player
-        var startX = CFG.TS * 3;
+        // Player — spawn at the camera tracking threshold so camera follows immediately
+        var startX = CFG.W * 0.35;
         var startY = (LevelData.ROWS - 2) * CFG.TS - CFG.TS;
         this._player = new Player(wn, startX, startY);
         this._player.syncNode();
@@ -346,6 +428,8 @@ window.Game = cc.Class({
             var maxCam = LevelData.COLS * CFG.TS - CFG.W;
             if (this._camX > maxCam) this._camX = maxCam;
             this._worldNode.x = -CFG.W/2 - this._camX;
+            // Parallax cloud layer (slower than world)
+            if (this._cloudLayer) this._cloudLayer.x = -CFG.W/2 - this._camX * 0.3;
 
             level.updateTiles(this._camX);
         }

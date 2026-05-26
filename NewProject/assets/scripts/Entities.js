@@ -31,6 +31,7 @@ function Player(parent, startX, startY) {
     this.dead = false;
     this.invTimer = 0;
     this.starTimer = 0;     // star power-up (rainbow + speed + enemy kill)
+    this._stompCooldown = 0;
     this.dir = 1;  // 1=right, -1=left
     this.animTimer = 0; this.animFrame = 0;
     this.state = 'idle'; // idle|walk|jump|skid|die
@@ -76,16 +77,14 @@ function Player(parent, startX, startY) {
 
 function Player_update(dt, keys, level) {
     if (this.dead) {
-        this.vy -= CFG.GRAVITY * dt;   // CC: up=positive, but our vy is screen-down
-        // actually in our physics vy is screen-downward (positive=down)
-        // re-check: Physics.resolve uses screen coords, vy positive = down
-        // So dead bounce: initial vy set negative in die(), then gravity pulls down
+        // up-bounce then fall: initial vy set negative in die(), gravity pulls back down
         this.vy += CFG.GRAVITY * dt;
         this.y += this.vy * dt;
         return;
     }
     if (this.invTimer > 0) this.invTimer -= dt;
     if (this.starTimer > 0) this.starTimer -= dt;
+    if (this._stompCooldown > 0) this._stompCooldown -= dt;
 
     var run = keys[cc.macro.KEY.shift];
     var starBoost = this.starTimer > 0 ? 1.5 : 1;
@@ -143,6 +142,9 @@ function Player_update(dt, keys, level) {
     // gravity
     this.vy += CFG.GRAVITY * dt;
     if (this.vy > CFG.MAX_FALL) this.vy = CFG.MAX_FALL;
+
+    // remember previous bottom for one-way platform check
+    this._prevBottom = this.y + this.h;
 
     // move
     this.x += this.vx * dt;

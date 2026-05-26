@@ -12,9 +12,10 @@ window.AudioMgr = {
         var clip = this._clips[name];
         if (!clip) return;
         cc.audioEngine.stopMusic();
-        if (!this._muted) {
-            this._bgmId = cc.audioEngine.playMusic(clip, true);
-        }
+        // always start the music; mute is implemented via setMusicVolume so
+        // un-muting later restores audibility.
+        this._bgmId = cc.audioEngine.playMusic(clip, true);
+        cc.audioEngine.setMusicVolume(this._muted ? 0 : 1);
     },
 
     stopBGM: function() {

@@ -62,7 +62,24 @@ var Bootstrap = cc.Class({
                         'images/mario_big0', 'images/mario_big1', 'images/mario_big2',
                         'images/mario_big3', 'images/mario_big4',
                         'images/timer',
-                        'images/button_orange', 'images/button_orange_hover', 'images/button_oriange_press'];
+                        'images/button_orange', 'images/button_orange_hover', 'images/button_oriange_press',
+                        'images/flag', 'images/cloud',
+                        'images/hill_top_left', 'images/hill_top_right',
+                        'images/hill2_top_left', 'images/hill2_top_right', 'images/hill2_body_left',
+                        'images/temp0',
+                        'images/oneway_platform',
+                        'images/plat_tl', 'images/plat_tm', 'images/plat_tr',
+                        'images/plat_ml', 'images/plat_mc', 'images/plat_mr',
+                        'images/plat_bl', 'images/plat_bm', 'images/plat_br',
+                        'images/shadow_top', 'images/shadow_mid', 'images/shadow_bot',
+                        'images/plat2_tl', 'images/plat2_tm', 'images/plat2_tr',
+                        'images/plat2_ml', 'images/plat2_mc', 'images/plat2_mr',
+                        'images/plat2_bl', 'images/plat2_bm', 'images/plat2_br',
+                        'images/plat2_shadow_top', 'images/plat2_shadow_mid', 'images/plat2_shadow_bot',
+                        'images/plat3_tl', 'images/plat3_tm', 'images/plat3_tr',
+                        'images/plat3_ml', 'images/plat3_mc', 'images/plat3_mr',
+                        'images/plat3_bl', 'images/plat3_bm', 'images/plat3_br',
+                        'images/plat3_shadow_top', 'images/plat3_shadow_mid', 'images/plat3_shadow_bot'];
         var fonts = ['fonts/white_font', 'fonts/yellow_font'];
 
         this._total = atlases.length + audios.length + uiImages.length + fonts.length;

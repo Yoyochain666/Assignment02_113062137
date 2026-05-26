@@ -26,11 +26,267 @@ window.GameLevel = cc.Class({
         this._effects = [];
         this._tileNodes = [];
         this._pipes   = [];
+        this._platforms = [];
 
+        // Layer 2 (decorations) — build before everything else so it sits at the back
+        this._buildDecorations();
         this._buildTileNodes();
         this._buildBlocks();
         this._buildEnemies();
         this._buildPipes();
+        this._buildFlag();
+        this._buildPlatforms();
+    },
+
+    // One-way platforms — 9-slice composition with optional back/front stacking
+    _buildPlatforms: function() {
+        var TS = CFG.TS;
+        var SL = 32;   // each 16×16 source stretched to 32×32
+        var self = this;
+
+        function placeSlice(parent, frame, x, y) {
+            var n = new cc.Node('plat_slice');
+            n.anchorX = 0; n.anchorY = 1;
+            n.x = x; n.y = -y;
+            n.width = SL; n.height = SL;
+            var s = n.addComponent(cc.Sprite);
+            s.sizeMode = cc.Sprite.SizeMode.CUSTOM;
+            s.trim = false;
+            var f = SPR.getFrame(frame);
+            if (f) s.spriteFrame = f;
+            parent.addChild(n);
+        }
+
+        function buildPlat(baseX, baseY, cellsW, cellsH, parent, prefix) {
+            for (var cx = 0; cx < cellsW; cx++) {
+                for (var cy = 0; cy < cellsH; cy++) {
+                    var isL = cx === 0, isR = cx === cellsW - 1;
+                    var isT = cy === 0, isB = cy === cellsH - 1;
+                    var f;
+                    if (isT && isL)      f = prefix + 'tl';
+                    else if (isT && isR) f = prefix + 'tr';
+                    else if (isB && isL) f = prefix + 'bl';
+                    else if (isB && isR) f = prefix + 'br';
+                    else if (isT)        f = prefix + 'tm';
+                    else if (isB)        f = prefix + 'bm';
+                    else if (isL)        f = prefix + 'ml';
+                    else if (isR)        f = prefix + 'mr';
+                    else                 f = prefix + 'mc';
+                    placeSlice(parent, f, baseX + cx * SL, baseY + cy * SL);
+                }
+            }
+        }
+
+        function buildShadow(x, baseY, heightCells, parent, shadowPrefix) {
+            for (var cy = 0; cy < heightCells; cy++) {
+                var f;
+                if (cy === 0)                       f = shadowPrefix + 'top';
+                else if (cy === heightCells - 1)    f = shadowPrefix + 'bot';
+                else                                f = shadowPrefix + 'mid';
+                placeSlice(parent, f, x, baseY + cy * SL);
+            }
+        }
+
+        // colour 1 = orange (plat_xx + shadow_xx); 2 = right-of-orange; 3 = below-orange
+        var COLOR_PREFIX = {
+            1: { plat: 'plat_',  shadow: 'shadow_'        },
+            2: { plat: 'plat2_', shadow: 'plat2_shadow_' },
+            3: { plat: 'plat3_', shadow: 'plat3_shadow_' },
+        };
+
+        // Each stack: back + 0 or more fronts. All bottoms align to ground (row 12).
+        // back.cellsH is auto-derived as (12 - back.row). Same for fronts:
+        //   front.row > back.row so front is shorter; bottom aligns to ground.
+        // Each platform inside a stack must use a DIFFERENT color (1/2/3).
+        // Spacing buffer (≥2 cols) from any Level 1 obstacle (pipes/blocks/stairs).
+        // Mix of proportions: tall-thin, wide-flat, multi-tier.
+        var stacks = [
+            // tall narrow tower, no fronts
+            { back:{ col: 33, row: 3, cellsW: 3, color: 2 } , fronts:[
+                { dx:-2, cellsW: 3, row: 7, color: 3 },
+            ]},
+
+            // wide multi-tier staircase
+            { back:{ col: 65, row: 3, cellsW: 8, color: 1 }, fronts:[
+                { dx:2, cellsW: 4, row: 7, color: 3 },
+                { dx: -1, cellsW: 4, row: 9, color: 2 },
+            ]},
+
+            // moderate, single front
+            { back:{ col:105, row: 3, cellsW: 5, color: 2 }, fronts:[
+                { dx:-2, cellsW: 3, row: 9, color: 3 },
+            ]},
+
+            // very wide low platform, no fronts
+            { back:{ col:139, row: 6, cellsW: 3, cellsH: 3, color: 3 } },
+
+            { back:{ col:145, row: 4, cellsW: 3, cellsH: 3, color: 2 } },
+
+            // medium with 2 fronts on opposite ends
+            { back:{ col:153, row: 3, cellsW: 3, cellsH: 3, color: 1 } },
+        ];
+
+        var GROUND_Y = 12 * TS;   // bottoms must touch this
+        stacks.forEach(function(s) {
+            var b = s.back;
+            // back.cellsH optional — if not provided, bottom auto-aligns to ground
+            var backCellsH = (b.cellsH !== undefined) ? b.cellsH : (12 - b.row);
+            var backX = b.col * TS;
+            var backY = b.row * TS;
+            var backPx = COLOR_PREFIX[b.color] || COLOR_PREFIX[1];
+
+            var backNode = new cc.Node('plat_back');
+            backNode.anchorX = 0; backNode.anchorY = 1;
+            backNode.x = backX; backNode.y = -backY;
+            self._worldNode.addChild(backNode, -1);
+            buildPlat(0, 0, b.cellsW, backCellsH, backNode, backPx.plat);
+            self._platforms.push({ x: backX, y: backY, w: b.cellsW * SL, h: backCellsH * SL });
+
+            // fronts cascade: each front's shadow uses the platform directly
+            // behind it (back for fronts[0], previous front for later ones).
+            var prevShadowPrefix = backPx.shadow;
+            (s.fronts || []).forEach(function(fr) {
+                var frPx = COLOR_PREFIX[fr.color] || COLOR_PREFIX[2];
+                var frontX = backX + fr.dx * SL;
+                var frontY = fr.row * TS;
+                // front.cellsH optional — default = ground-aligned
+                var frontCellsH = (fr.cellsH !== undefined) ? fr.cellsH : (12 - fr.row);
+                var frontNode = new cc.Node('plat_front');
+                frontNode.anchorX = 0; frontNode.anchorY = 1;
+                frontNode.x = frontX; frontNode.y = -frontY;
+                self._worldNode.addChild(frontNode, -1);
+                buildShadow(fr.cellsW * SL, 0, frontCellsH, frontNode, prevShadowPrefix);
+                buildPlat(0, 0, fr.cellsW, frontCellsH, frontNode, frPx.plat);
+                self._platforms.push({ x: frontX, y: frontY, w: fr.cellsW * SL, h: frontCellsH * SL });
+                prevShadowPrefix = frPx.shadow;
+            });
+        });
+    },
+
+    // ── Layer 2: non-interactive hill decorations (scroll with world)
+    _buildDecorations: function() {
+        var TS = CFG.TS;
+        var deco = new cc.Node('deco');
+        deco.anchorX = 0; deco.anchorY = 1;
+        deco.x = 0; deco.y = 0;
+        this._worldNode.addChild(deco, -10);   // behind tiles/entities
+
+        function makeTile(parent, frameName, x, y, w, h) {
+            var n = new cc.Node('hillTile');
+            n.anchorX = 0; n.anchorY = 1;
+            n.x = x; n.y = -y;
+            n.width = w; n.height = h;
+            var s = n.addComponent(cc.Sprite);
+            s.sizeMode = cc.Sprite.SizeMode.CUSTOM;
+            s.trim = false;
+            var f = SPR.getFrame(frameName);
+            if (f) s.spriteFrame = f;
+            parent.addChild(n);
+            return n;
+        }
+
+        // Hill: 2 cols wide, top is 274/275, body rows are 316/317 stacked.
+        // `height` = total rows (1 = just top, 2 = top + 1 body row, etc.).
+        function hill(col, baseRow, height) {
+            var topRow = baseRow - height + 1;
+            makeTile(deco, 'hill_top_left',   col      * TS, topRow * TS, TS, TS);
+            makeTile(deco, 'hill_top_right', (col + 1) * TS, topRow * TS, TS, TS);
+            for (var r = topRow + 1; r <= baseRow; r++) {
+                makeTile(deco, 'tiles_316.png',  col      * TS, r * TS, TS, TS);
+                makeTile(deco, 'tiles_317.png', (col + 1) * TS, r * TS, TS, TS);
+            }
+        }
+        // Hill style 2 (different color) — body right is hill2_body_left flipped
+        function hill2(col, baseRow, height) {
+            var topRow = baseRow - height + 1;
+            makeTile(deco, 'hill2_top_left',   col      * TS, topRow * TS, TS, TS);
+            makeTile(deco, 'hill2_top_right', (col + 1) * TS, topRow * TS, TS, TS);
+            for (var r = topRow + 1; r <= baseRow; r++) {
+                makeTile(deco, 'hill2_body_left',  col      * TS, r * TS, TS, TS);
+                makeTile(deco, 'temp0',           (col + 1) * TS, r * TS, TS, TS);
+            }
+        }
+
+        // ── Cluster placement ───────────────────────────────────────────
+        // Each cluster: same color, hills overlap by half-width (1 tile),
+        // adjacent heights differ by >= 1. Tallest drawn first → shorter
+        // ones appear in front.
+        var groundRow = 12;
+        // Cluster positions chosen to avoid Level 1 floating blocks (col 15-25,
+        // 78-82, 95-98), pipes (28-29, 38-39, 46-47, 57-58) and stairs
+        // (133-136, 145-148, 160-167). Heights capped at 4 (won't reach row 8).
+        // Platforms occupy roughly: 31-35, 64-72, 103-109, 139-141, 145-147, 153-155.
+        // Layer 1 obstacles in the usual columns. Hills go only in the gaps.
+        var clusters = [
+            [1,  4, [3, 2, 4]],
+            [2,  9, [2, 3]],
+            [1, 41, [3, 2, 4]],
+            [2, 49, [2, 3, 4]],
+            [1, 53, [3, 2]],
+            [2, 59, [3, 2]],
+            [1, 74, [2, 3]],
+            [2, 84, [2, 4, 3]],
+            [1, 89, [3, 2]],
+            [2, 99, [3, 2]],
+            [1,111, [2, 3, 4]],
+            [2,120, [3, 2]],
+            [1,126, [4, 2, 3]],
+            [2,142, [2, 3]],
+            [1,150, [3, 2]],
+            [2,156, [2, 3]],
+            [1,168, [2, 3]],
+            [2,174, [3, 2, 4]],
+            [1,183, [2, 4, 3, 2]],
+            [2,190, [3, 2]],
+        ];
+        clusters.forEach(function(c) {
+            var fn = (c[0] === 1) ? hill : hill2;
+            var startCol = c[1];
+            var heights = c[2];
+            // pair each hill with its draw column; tallest goes first (back)
+            var hills = heights.map(function(h, i) {
+                return { col: startCol + i, h: h };
+            });
+            hills.sort(function(a, b) { return b.h - a.h; });
+            hills.forEach(function(hh) { fn(hh.col, groundRow, hh.h); });
+        });
+    },
+
+    _buildFlag: function() {
+        var TS = CFG.TS;
+        var flagX = LevelData.flagCol * TS;
+
+        // ── Flag pole + flag (build first, lower z-order so base covers its bottom)
+        var w = 64;
+        var h = 9 * TS;
+        var worldX = flagX - w / 2 + TS / 2 - 6;   // shifted 6px left
+        var worldTopY = 3 * TS;
+        var n = new cc.Node('flag');
+        n.anchorX = 0; n.anchorY = 1;
+        n.x = worldX; n.y = -worldTopY;
+        n.width = w; n.height = h;
+        var s = n.addComponent(cc.Sprite);
+        s.sizeMode = cc.Sprite.SizeMode.CUSTOM;
+        s.trim = false;
+        var f = SPR.getFrame('flag') || SPR.getFrame('flag.png');
+        if (f) s.spriteFrame = f;
+        this._worldNode.addChild(n, -6);
+
+        // ── Orange base / pedestal — rendered on top of flag pole bottom
+        var baseW = 32;
+        var baseH = 32;
+        var baseX = flagX - baseW / 2 + TS / 2;
+        var baseTopY = 12 * TS - baseH;
+        var base = new cc.Node('flagBase');
+        base.anchorX = 0; base.anchorY = 1;
+        base.x = baseX; base.y = -baseTopY;
+        base.width = baseW; base.height = baseH;
+        var baseSpr = base.addComponent(cc.Sprite);
+        baseSpr.sizeMode = cc.Sprite.SizeMode.CUSTOM;
+        baseSpr.trim = false;
+        var bFrame = SPR.getFrame('button_orange') || SPR.getFrame('button_orange.png');
+        if (bFrame) baseSpr.spriteFrame = bFrame;
+        this._worldNode.addChild(base, -5);
     },
 
     // Merge contiguous pipe tiles into single collision rectangles
@@ -95,8 +351,28 @@ window.GameLevel = cc.Class({
                 n.angle = 0; n.scaleX = 1; n.scaleY = 1;
                 n.color = cc.Color.WHITE;
                 var sprName = null;
-                if (t === T.GROUND) sprName = CFG.TILE_SPR[1];
-                else if (t === T.SOLID) sprName = CFG.TILE_SPR[9];
+                if (t === T.GROUND) {
+                    // top-surface tile — pick edge variant based on neighbours
+                    var lG = this._map[(col-1)+','+row] === T.GROUND;
+                    var rG = this._map[(col+1)+','+row] === T.GROUND;
+                    if (lG && rG)      sprName = 'tiles_272.png';
+                    else if (!lG && rG) sprName = 'tiles_271.png';
+                    else if (lG && !rG) sprName = 'tiles_273.png';
+                    else                sprName = 'tiles_272.png';
+                } else if (t === T.SOLID) {
+                    if (row === 13) {
+                        // sub-surface fill — same edge logic with 313/314/315
+                        var lS = this._map[(col-1)+','+row] === T.SOLID;
+                        var rS = this._map[(col+1)+','+row] === T.SOLID;
+                        if (lS && rS)      sprName = 'tiles_314.png';
+                        else if (!lS && rS) sprName = 'tiles_313.png';
+                        else if (lS && !rS) sprName = 'tiles_315.png';
+                        else                sprName = 'tiles_314.png';
+                    } else {
+                        // above-ground solid (stairs / boundary) — single tile
+                        sprName = 'tiles_312.png';
+                    }
+                }
                 else if (t === T.PIPE_TL) {
                     // pipe lip — slightly wider than body so inner body aligns with 468
                     sprName = 'tiles_467.png';
@@ -242,6 +518,21 @@ window.GameLevel = cc.Class({
         qbBumps.forEach(function(qb) { qb.bump(game); });
         brickBumps.forEach(function(b) { b.bump(ent, game); });
         brickBreaksFromAbove.forEach(function(b) { b._break(game); });
+
+        // ── One-way platforms: only land from above when falling, AND only if
+        //    the entity's bottom was above the platform top last frame (so big
+        //    mario walking under a low platform isn't sucked up).
+        this._platforms.forEach(function(p) {
+            var ov = Physics.overlap(ent, p);
+            if (!ov) return;
+            if (ent.vy <= 0) return;
+            var prevBottom = (ent._prevBottom !== undefined) ? ent._prevBottom : (ent.y + ent.h);
+            if (prevBottom > p.y + 0.5) return;   // came from below or inside → don't snap
+            ent.y = p.y - ent.h;
+            ent.vy = 0;
+            ent.onGround = true;
+            result.bottom = true;
+        });
         return result;
     },
 
@@ -338,7 +629,7 @@ window.GameLevel = cc.Class({
                 if (!ov) return;
                 if (killMode) {
                     kills.push(e);
-                } else if (player.vy > 0 && player.y + player.h - e.y < 20) {
+                } else if (player.vy > 0) {
                     stomps.push(e);
                 } else {
                     hurt = true;
@@ -358,7 +649,8 @@ window.GameLevel = cc.Class({
             });
             if (stomps.length > 0) {
                 player.vy = -350;
-            } else if (hurt) {
+                player._stompCooldown = 0.4;   // hurt-immune for a brief moment (no flash)
+            } else if (hurt && (player._stompCooldown || 0) <= 0) {
                 player.hurt(game);
             }
         }
