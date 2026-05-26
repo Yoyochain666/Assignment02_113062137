@@ -30,6 +30,7 @@ function Player(parent, startX, startY) {
     this.big = false;
     this.dead = false;
     this.invTimer = 0;
+    this.starTimer = 0;     // star power-up (rainbow + speed + enemy kill)
     this.dir = 1;  // 1=right, -1=left
     this.animTimer = 0; this.animFrame = 0;
     this.state = 'idle'; // idle|walk|jump|skid|die
@@ -84,9 +85,11 @@ function Player_update(dt, keys, level) {
         return;
     }
     if (this.invTimer > 0) this.invTimer -= dt;
+    if (this.starTimer > 0) this.starTimer -= dt;
 
     var run = keys[cc.macro.KEY.shift];
-    var spd = run ? CFG.RUN_SPD : CFG.WALK_SPD;
+    var starBoost = this.starTimer > 0 ? 1.5 : 1;
+    var spd = (run ? CFG.RUN_SPD : CFG.WALK_SPD) * starBoost;
     this._running = run;
 
     var crouchKey = keys[cc.macro.KEY.s] || keys[cc.macro.KEY.down];
@@ -181,13 +184,29 @@ function Player_anim() {
     }
     if (frames.length > 1) {
         this.animTimer += 1/60;
-        var threshold = (this.state === 'walk' && !this._running) ? 0.25 : 0.08;
+        var threshold = (this.state === 'walk' && !this._running) ? 0.75 : 0.3;
         if (this.animTimer >= threshold) { this.animTimer = 0; this.animFrame = (this.animFrame+1) % frames.length; }
     }
     SPR.setSprite(this._spr, frames[this.animFrame % frames.length]);
 
-    // flashing when invincible
-    this._node.opacity = (this.invTimer > 0 && Math.floor(this.invTimer * 10) % 2 === 0) ? 80 : 255;
+    // star power-up: rainbow cycling color
+    if (this.starTimer > 0) {
+        var rainbow = [
+            cc.color(255,  60,  60),
+            cc.color(255, 180,  40),
+            cc.color(255, 255,  60),
+            cc.color( 80, 255,  80),
+            cc.color( 60, 200, 255),
+            cc.color(200,  80, 255),
+        ];
+        var idx = Math.floor(this.starTimer * 20) % rainbow.length;
+        this._node.color = rainbow[idx];
+        this._node.opacity = 255;
+    } else {
+        this._node.color = cc.Color.WHITE;
+        // flashing when hurt-invincible
+        this._node.opacity = (this.invTimer > 0 && Math.floor(this.invTimer * 10) % 2 === 0) ? 80 : 255;
+    }
 }
 
 function Player_hurt(game) {
@@ -244,7 +263,25 @@ Goomba.prototype.stomp = function() {
     SPR.setSprite(this._spr, CFG.ANIM.G_DEAD[0]);
     AudioMgr.playSFX('stomp');
 };
+Goomba.prototype.spinKill = function() {
+    this.dead = true;
+    this._spinKilled = true;
+    this.vx = 200; this.vy = -450;     // up-right launch
+    this._spin = 720;                   // deg/s
+    this._spinAngle = 0;
+    this._lifeTimer = 1.5;
+    AudioMgr.playSFX('stomp');
+};
 Goomba.prototype.update = function(dt, level) {
+    if (this._spinKilled) {
+        this.vy += CFG.GRAVITY * dt;
+        this.x += this.vx * dt;
+        this.y += this.vy * dt;
+        this._spinAngle += this._spin * dt;
+        this._lifeTimer -= dt;
+        if (this._lifeTimer <= 0) { this._node.active = false; this.removed = true; }
+        return;
+    }
     if (this.dead) {
         this.deadTimer -= dt;
         if (this.deadTimer <= 0) { this._node.active = false; this.removed = true; }
@@ -255,14 +292,20 @@ Goomba.prototype.update = function(dt, level) {
     this.x += this.vx * dt;
     this.y += this.vy * dt;
     var res = level.resolveEntity(this);
-    // only flip if actually moving into the wall
     if ((res.right && this.vx > 0) || (res.left && this.vx < 0)) this.vx = -this.vx;
-    // animate (alternate flip on single walk frame)
     this.animTimer += dt;
     if (this.animTimer >= 0.25) { this.animTimer = 0; this.animFrame ^= 1; }
     SPR.setSprite(this._spr, CFG.ANIM.G_WALK[0]);
 };
 Goomba.prototype.syncNode = function() {
+    if (this._spinKilled) {
+        this._node.anchorX = 0.5; this._node.anchorY = 0.5;
+        this._node.x = this.x + this.w / 2;
+        this._node.y = -(this.y + this.h / 2);
+        this._node.angle = -this._spinAngle;   // CW for upward right
+        this._node.scaleX = 1;
+        return;
+    }
     if (!this.dead && this.animFrame) {
         this._node.scaleX = -1;
         this._node.x = this.x + this.w;
@@ -301,8 +344,26 @@ Turtle.prototype.stomp = function() {
         this.vx = 0;
     }
 };
+Turtle.prototype.spinKill = function() {
+    this.dead = true;
+    this._spinKilled = true;
+    this.vx = 200; this.vy = -450;
+    this._spin = 720;
+    this._spinAngle = 0;
+    this._lifeTimer = 1.5;
+    AudioMgr.playSFX('stomp');
+};
 Turtle.prototype.update = function(dt, level) {
     if (this.removed) return;
+    if (this._spinKilled) {
+        this.vy += CFG.GRAVITY * dt;
+        this.x += this.vx * dt;
+        this.y += this.vy * dt;
+        this._spinAngle += this._spin * dt;
+        this._lifeTimer -= dt;
+        if (this._lifeTimer <= 0) { this._node.active = false; this.removed = true; }
+        return;
+    }
     // turtle stays in shell once stomped (no recovery)
     this.vy += CFG.GRAVITY * dt;
     if (this.vy > CFG.MAX_FALL) this.vy = CFG.MAX_FALL;
@@ -329,9 +390,17 @@ Turtle.prototype.update = function(dt, level) {
     }
 };
 Turtle.prototype.syncNode = function() {
+    if (this._spinKilled) {
+        this._node.anchorX = 0.5; this._node.anchorY = 0.5;
+        this._node.x = this.x + this.w / 2;
+        this._node.y = -(this.y + this.h / 2);
+        this._node.angle = -this._spinAngle;
+        this._node.scaleX = 1;
+        this._node.height = this.h;
+        return;
+    }
     this._node.anchorX = 0; this._node.anchorY = 1;
     this._node.angle = 0;
-    // sprite faces left by default → flip only when moving right
     if (this.vx > 0) {
         this._node.scaleX = -1;
         this._node.x = this.x + this.w;

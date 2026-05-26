@@ -194,47 +194,30 @@ window.GameLevel = cc.Class({
             }
         }
         var game = this._game;
-        // question blocks (always solid until removed)
+
+        // ── Pass 1: detect bumps with ORIGINAL ent position (before any resolution)
+        var qbBumps = [];
         this._qBlocks.forEach(function(qb) {
-            if (!qb._node || !qb._node.active) return;
-            var solid = { x:qb.x, y:qb.y, w:qb.w, h:qb.h };
-            // detect bump BEFORE resolving (resolve pushes player out, killing overlap)
-            var ov = Physics.overlap(ent, solid);
-            // bump from below (jumping up)
-            if (ov && !qb.used && ent.vy < 0 && ov.oy <= ov.ox && ent.y > qb.y
-                && ov.ox >= ent.w / 4) {
-                qb.bump(game);
-            }
-            // trigger from above (fast-fall onto Q block)
-            if (ov && !qb.used && ent.state === 'fall' && ent.vy > 0 && ov.oy <= ov.ox
-                && ent.y < qb.y && ov.ox >= ent.w / 4) {
-                qb.bump(game);
-            }
-            var r = Physics.resolve(ent, solid);
-            if (r) {
-                if (r.bottom) { result.bottom = true; ent.onGround = true; }
-                if (r.top)    result.top = true;
-                if (r.left)   result.left = true;
-                if (r.right)  result.right = true;
-            }
+            if (!qb._node || !qb._node.active || qb.used) return;
+            var ov = Physics.overlap(ent, { x:qb.x, y:qb.y, w:qb.w, h:qb.h });
+            if (!ov || ov.oy > ov.ox || ov.ox < ent.w / 4) return;
+            if (ent.vy < 0 && ent.y > qb.y) qbBumps.push(qb);                       // from below
+            else if (ent.state === 'fall' && ent.vy > 0 && ent.y < qb.y) qbBumps.push(qb);  // from above
         });
-        // bricks
+        var brickBumps = [];   // from below (big mario)
+        var brickBreaksFromAbove = [];   // fast-fall
         this._bricks.forEach(function(b) {
             if (b.removed) return;
-            var solid = { x:b.x, y:b.y, w:b.w, h:b.h };
-            var ov = Physics.overlap(ent, solid);
-            // fast-fall break (player in fall state crashing down through brick from above)
-            if (ov && ent.state === 'fall' && ent.vy > 0 && ov.oy <= ov.ox && ent.y < b.y
-                && ov.ox >= ent.w / 4) {
-                b._break(game);
-                return;   // don't resolve — player keeps falling
-            }
-            // bump from below (big mario jumping into brick)
-            if (ov && ent.vy < 0 && ov.oy <= ov.ox && ent.y > b.y && ent.big !== undefined
-                && ov.ox >= ent.w / 4) {
-                b.bump(ent, game);
-            }
-            var r = Physics.resolve(ent, solid);
+            var ov = Physics.overlap(ent, { x:b.x, y:b.y, w:b.w, h:b.h });
+            if (!ov || ov.oy > ov.ox || ov.ox < ent.w / 4) return;
+            if (ent.state === 'fall' && ent.vy > 0 && ent.y < b.y) brickBreaksFromAbove.push(b);
+            else if (ent.vy < 0 && ent.y > b.y && ent.big !== undefined) brickBumps.push(b);
+        });
+
+        // ── Pass 2: resolve collisions FIRST (so player bounces off bricks that are about to break)
+        this._qBlocks.forEach(function(qb) {
+            if (!qb._node || !qb._node.active) return;
+            var r = Physics.resolve(ent, { x:qb.x, y:qb.y, w:qb.w, h:qb.h });
             if (r) {
                 if (r.bottom) { result.bottom = true; ent.onGround = true; }
                 if (r.top)    result.top = true;
@@ -242,6 +225,23 @@ window.GameLevel = cc.Class({
                 if (r.right)  result.right = true;
             }
         });
+        this._bricks.forEach(function(b) {
+            if (b.removed) return;
+            // fast-fall break: skip resolve so player keeps falling through
+            if (brickBreaksFromAbove.indexOf(b) !== -1) return;
+            var r = Physics.resolve(ent, { x:b.x, y:b.y, w:b.w, h:b.h });
+            if (r) {
+                if (r.bottom) { result.bottom = true; ent.onGround = true; }
+                if (r.top)    result.top = true;
+                if (r.left)   result.left = true;
+                if (r.right)  result.right = true;
+            }
+        });
+
+        // ── Pass 3: apply bumps / breaks (after physics so bounce already happened)
+        qbBumps.forEach(function(qb) { qb.bump(game); });
+        brickBumps.forEach(function(b) { b.bump(ent, game); });
+        brickBreaksFromAbove.forEach(function(b) { b._break(game); });
         return result;
     },
 
@@ -319,11 +319,9 @@ window.GameLevel = cc.Class({
             self._enemies.forEach(function(other) {
                 if (other === e || other.dead) return;
                 if (Physics.overlap(e, other)) {
-                    if (other.stomp) {
-                        other.stomp();
-                        game.addScore(200);
-                        self.addScore(200, other.x, other.y - 20);
-                    }
+                    if (other.spinKill) other.spinKill();
+                    game.addScore(200);
+                    self.addScore(200, other.x, other.y - 20);
                 }
             });
         });
@@ -331,12 +329,16 @@ window.GameLevel = cc.Class({
         // Player ↔ enemy — collect all collisions first, then resolve
         if (!player.dead) {
             var stomps = [];
+            var kills = [];        // outright kills (star or fast-fall)
             var hurt = false;
+            var killMode = player.starTimer > 0 || player.state === 'fall';
             this._enemies.forEach(function(e) {
                 if (e.dead) return;
                 var ov = Physics.overlap(player, e);
                 if (!ov) return;
-                if (player.vy > 0 && player.y + player.h - e.y < 20) {
+                if (killMode) {
+                    kills.push(e);
+                } else if (player.vy > 0 && player.y + player.h - e.y < 20) {
                     stomps.push(e);
                 } else {
                     hurt = true;
@@ -348,6 +350,11 @@ window.GameLevel = cc.Class({
                     game.addScore(100);
                     self.addScore(100, e.x, e.y - 20);
                 }
+            });
+            kills.forEach(function(e) {
+                if (e.spinKill) e.spinKill();
+                game.addScore(200);
+                self.addScore(200, e.x, e.y - 20);
             });
             if (stomps.length > 0) {
                 player.vy = -350;
@@ -368,8 +375,8 @@ window.GameLevel = cc.Class({
                         game.addScore(1000);
                         AudioMgr.playSFX('powerUp');
                     } else {
-                        // star
-                        player.invTimer = 10;
+                        // star — rainbow invincibility + speed + kill enemies on touch
+                        player.starTimer = 10;
                         game.addScore(1000);
                         AudioMgr.playSFX('powerUp');
                     }

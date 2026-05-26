@@ -8,6 +8,9 @@ window.Game = cc.Class({
     onLoad: function() {
         // state: LOADING | MENU | LEVEL_SELECT | PLAYING | PAUSED | DEAD | GAME_OVER | LEVEL_CLEAR
         this._state     = 'LOADING';
+        this._starBgmActive = false;
+        this._selectedLevel = 1;
+        this._levelLabels = null;
         this._score     = 0;
         this._coins     = 0;
         this._lives     = CFG.LIVES;
@@ -39,12 +42,11 @@ window.Game = cc.Class({
         var K = cc.macro.KEY;
         if (e.keyCode === K.m) AudioMgr.toggleMute();
         if (e.keyCode === K.p || e.keyCode === K.escape) this._togglePause();
-        if (this._state === 'MENU' && (e.keyCode === K.space || e.keyCode === K.enter))
-            this._showLevelSelect();
-        if (this._state === 'LEVEL_SELECT' && (e.keyCode === K.space || e.keyCode === K.enter))
-            this._startGame();
-        if ((this._state === 'GAME_OVER' || this._state === 'LEVEL_CLEAR') &&
-            (e.keyCode === K.space || e.keyCode === K.enter)) this._showMenu();
+        if (this._state === 'MENU') {
+            if (e.keyCode === K.space || e.keyCode === K.enter) this._showLevelSelect();
+        } else if (this._state === 'GAME_OVER' || this._state === 'LEVEL_CLEAR') {
+            if (e.keyCode === K.space || e.keyCode === K.enter) this._showMenu();
+        }
     },
     _onKeyUp: function(e) { this._keys[e.keyCode] = false; },
 
@@ -182,14 +184,56 @@ window.Game = cc.Class({
         this._state = 'LEVEL_SELECT';
         this._clearOverlay();
         this._setBgColor(0, 0, 0);
+        this._makeLabel(this._overlayNode, 'SELECT LEVEL', 140, 36);
+        var self = this;
+        this._makeLevelButton(-160, 30, 'WORLD 1', function () {
+            self._selectedLevel = 1; self._startGame();
+        });
+        this._makeLevelButton( 160, 30, 'WORLD 2', function () {
+            self._selectedLevel = 2; self._startGame();
+        });
+    },
 
-        this._makeLabel(this._overlayNode, 'SELECT LEVEL', 140, 32);
-        this._makeLabel(this._overlayNode, 'WORLD 1-1', 50, 28, cc.color(255, 220, 0));
-        this._makeLabel(this._overlayNode, 'Press SPACE to Play', -60, 18, cc.color(200,200,200));
+    _makeLevelButton: function(x, y, label, onClick) {
+        var node = new cc.Node('lvlBtn');
+        node.anchorX = 0.5; node.anchorY = 0.5;
+        node.x = x; node.y = y;
+        node.width = 220; node.height = 90;
+        var spr = node.addComponent(cc.Sprite);
+        spr.sizeMode = cc.Sprite.SizeMode.CUSTOM;
+        spr.trim = false;
+        var normal  = SPR.getFrame('button_orange') || SPR.getFrame('button_orange.png');
+        var hover   = SPR.getFrame('button_orange_hover') || SPR.getFrame('button_orange_hover.png');
+        var pressed = SPR.getFrame('button_oriange_press') || SPR.getFrame('button_oriange_press.png');
+        if (normal) spr.spriteFrame = normal;
+        var btn = node.addComponent(cc.Button);
+        btn.transition = cc.Button.Transition.SPRITE;
+        btn.target = node;
+        if (normal)  btn.normalSprite  = normal;
+        if (pressed) btn.pressedSprite = pressed;
+        if (hover)   btn.hoverSprite   = hover;
+        node.on(cc.Node.EventType.TOUCH_END, onClick, this);
+        // label on top of button
+        var lblNode = new cc.Node('btnLabel');
+        lblNode.anchorX = 0.5; lblNode.anchorY = 0.5;
+        lblNode.x = 0; lblNode.y = 0;
+        var lbl = lblNode.addComponent(cc.Label);
+        var FONTS = window.FONTS || {};
+        if (FONTS.white_font) { lbl.font = FONTS.white_font; lbl.useSystemFont = false; }
+        lbl.string = label;
+        lbl.fontSize = 32;
+        lbl.lineHeight = 32;
+        lbl.horizontalAlign = cc.Label.HorizontalAlign.CENTER;
+        lblNode.color = cc.Color.WHITE;
+        node.addChild(lblNode);
+        this._overlayNode.addChild(node);
+        return node;
     },
 
     // ── start / restart game ─────────────────────────────────────────────
     _startGame: function() {
+        LevelData.setLevel(this._selectedLevel);
+        this._levelLabels = null;
         this._clearOverlay();
         this._clearWorld();
         this._score  = 0;
@@ -266,6 +310,23 @@ window.Game = cc.Class({
 
             // player update
             p.update(dt, this._keys, level);
+
+            // Star BGM management
+            if (p.starTimer > 0) {
+                if (!this._starBgmActive) {
+                    this._starBgmActive = true;
+                    AudioMgr.playBGM('starbgm');
+                }
+                if (!AudioMgr.isMuted()) {
+                    // fade out in the last 1.5 sec
+                    var vol = p.starTimer < 1.5 ? Math.max(0, p.starTimer / 1.5) : 1;
+                    cc.audioEngine.setMusicVolume(vol);
+                }
+            } else if (this._starBgmActive) {
+                this._starBgmActive = false;
+                if (!AudioMgr.isMuted()) cc.audioEngine.setMusicVolume(1);
+                AudioMgr.playBGM('bgm1');
+            }
 
             // block bump check
             if (!p.dead) level.checkBlockBump(p);

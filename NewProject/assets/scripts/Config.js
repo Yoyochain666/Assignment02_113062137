@@ -3,7 +3,7 @@ window.CFG = {
     W: 1280, H: 720, HUD_H: 72, GAME_H: 648,
     TS: 32, SCALE: 2,
     GRAVITY: 1600,
-    JUMP_VY: 580,       // positive = up in CC
+    JUMP_VY: 660,       // gives jump height ~136px ≈ 4.25 tiles
     WALK_SPD: 160,
     RUN_SPD: 280,
     MAX_FALL: 580,

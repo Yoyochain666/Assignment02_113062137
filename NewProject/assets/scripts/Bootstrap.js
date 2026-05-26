@@ -56,11 +56,13 @@ var Bootstrap = cc.Class({
             ['audio/Game Over',       'gameover'],
             ['audio/levelClear',      'levelClear'],
             ['audio/powerDown',       'powerDown'],
+            ['audio/Super_Star',      'starbgm'],
         ];
         var uiImages = ['images/title_0', 'images/title_1', 'images/life', 'images/menu_bg',
                         'images/mario_big0', 'images/mario_big1', 'images/mario_big2',
                         'images/mario_big3', 'images/mario_big4',
-                        'images/timer'];
+                        'images/timer',
+                        'images/button_orange', 'images/button_orange_hover', 'images/button_oriange_press'];
         var fonts = ['fonts/white_font', 'fonts/yellow_font'];
 
         this._total = atlases.length + audios.length + uiImages.length + fonts.length;
