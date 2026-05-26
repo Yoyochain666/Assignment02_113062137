@@ -12,7 +12,9 @@ function makeNode(parent, name, w, h) {
 }
 function makeSpriteNode(parent, name, w, h) {
     var n = makeNode(parent, name, w, h);
-    n.addComponent(cc.Sprite);
+    var s = n.addComponent(cc.Sprite);
+    s.sizeMode = cc.Sprite.SizeMode.CUSTOM;
+    s.trim = false;
     return n;
 }
 function setNodePos(node, wx, wy) {   // world (screen) → CC local
@@ -40,10 +42,33 @@ function Player(parent, startX, startY) {
     this.shrink = Player_shrink;
     this._anim  = Player_anim;
     this.syncNode = function() {
-        setNodePos(this._node, this.x, this.y);
-        this._node.scaleX = this.dir;
-        this._node.height = this.h;
-        this._node.width  = this.w;
+        var useRotated = this.big && !this.dead;
+        if (useRotated) {
+            // big mario sprites are stored sideways → center anchor + 90° CCW
+            // face left achieved by flipping vertically BEFORE rotation (scale-then-rotate order)
+            this._node.anchorX = 0.5; this._node.anchorY = 0.5;
+            this._node.width  = this.h;
+            this._node.height = this.w;
+            this._node.angle  = 90;
+            this._node.scaleX = 1;
+            this._node.scaleY = (this.dir > 0) ? 1 : -1;
+            this._node.x = this.x + this.w / 2;
+            this._node.y = -(this.y + this.h / 2);
+        } else {
+            this._node.anchorX = 0; this._node.anchorY = 1;
+            this._node.width  = this.w;
+            this._node.height = this.h;
+            this._node.angle  = 0;
+            this._node.scaleY = 1;
+            if (this.dir < 0) {
+                this._node.scaleX = -1;
+                this._node.x = this.x + this.w;
+            } else {
+                this._node.scaleX = 1;
+                this._node.x = this.x;
+            }
+            this._node.y = -this.y;
+        }
         this._anim();
     };
 }
@@ -62,24 +87,54 @@ function Player_update(dt, keys, level) {
 
     var run = keys[cc.macro.KEY.shift];
     var spd = run ? CFG.RUN_SPD : CFG.WALK_SPD;
+    this._running = run;
 
-    // horizontal
+    var crouchKey = keys[cc.macro.KEY.s] || keys[cc.macro.KEY.down];
+
+    // big mario shrinks while crouching on ground
+    if (this.big) {
+        var wantShrunk = crouchKey && this.onGround;
+        if (wantShrunk && !this._crouchShrunk) {
+            this._crouchShrunk = true;
+            var oldH = this.h;
+            this.h = 40;
+            this.y += oldH - this.h;     // keep feet on ground
+        } else if (!wantShrunk && this._crouchShrunk) {
+            this._crouchShrunk = false;
+            var oldH2 = this.h;
+            this.h = 60;
+            this.y -= this.h - oldH2;
+        }
+    }
+
+    // horizontal — disabled while crouching on ground
     var moving = false;
-    if (keys[cc.macro.KEY.left] || keys[cc.macro.KEY.a]) {
-        this.vx = -spd; this.dir = -1; moving = true;
-    } else if (keys[cc.macro.KEY.right] || keys[cc.macro.KEY.d]) {
-        this.vx = spd;  this.dir =  1; moving = true;
+    if (!(crouchKey && this.onGround)) {
+        if (keys[cc.macro.KEY.left] || keys[cc.macro.KEY.a]) {
+            this.vx = -spd; this.dir = -1; moving = true;
+        } else if (keys[cc.macro.KEY.right] || keys[cc.macro.KEY.d]) {
+            this.vx = spd;  this.dir =  1; moving = true;
+        } else {
+            this.vx *= 0.7;
+            if (Math.abs(this.vx) < 5) this.vx = 0;
+        }
     } else {
-        this.vx *= 0.7;
+        this.vx *= 0.5;
         if (Math.abs(this.vx) < 5) this.vx = 0;
     }
 
-    // jump
+    // jump — disabled while crouching
     var wantJump = keys[cc.macro.KEY.up] || keys[cc.macro.KEY.w] || keys[cc.macro.KEY.space];
-    if (wantJump && this.onGround) {
-        this.vy = -CFG.JUMP_VY;   // negative = upward in screen coords
+    if (wantJump && this.onGround && !crouchKey) {
+        this.vy = -CFG.JUMP_VY;
         this.onGround = false;
         AudioMgr.playSFX('jump');
+    }
+
+    // ground-pound / fast fall: S while in the air
+    if (crouchKey && !this.onGround && this.state !== 'fall') {
+        this.state = 'fall';
+        this.vy = Math.max(this.vy, 500);   // accelerate downward
     }
 
     // gravity
@@ -90,19 +145,24 @@ function Player_update(dt, keys, level) {
     this.x += this.vx * dt;
     this.y += this.vy * dt;
 
-    // clamp left
     if (this.x < 0) { this.x = 0; this.vx = 0; }
 
-    // tile collisions
     this.onGround = false;
     level.resolveEntity(this);
 
     // determine animation state
-    if (!this.onGround) this.state = 'jump';
-    else if (moving) {
+    if (this.state === 'fall' && (crouchKey || !this.onGround)) {
+        // stay in fall: still falling, OR landed but still holding S
+    } else if (!this.onGround) {
+        this.state = 'jump';
+    } else if (crouchKey) {
+        this.state = 'crouch';
+    } else if (moving) {
         var braking = (this.vx > 0 && this.dir < 0) || (this.vx < 0 && this.dir > 0);
         this.state = braking ? 'skid' : 'walk';
-    } else this.state = 'idle';
+    } else {
+        this.state = 'idle';
+    }
 }
 
 function Player_anim() {
@@ -110,16 +170,19 @@ function Player_anim() {
     var frames;
     var b = this.big;
     switch (this.state) {
-        case 'idle':  frames = b ? A.B_IDLE : A.S_IDLE; break;
-        case 'walk':  frames = b ? A.B_WALK : A.S_WALK; break;
-        case 'jump':  frames = b ? A.B_JUMP : A.S_JUMP; break;
-        case 'skid':  frames = b ? A.B_SKID : A.S_SKID; break;
-        case 'die':   frames = A.S_DIE; break;
-        default:      frames = A.S_IDLE;
+        case 'idle':   frames = b ? A.B_IDLE   : A.S_IDLE;   break;
+        case 'walk':   frames = b ? A.B_WALK   : A.S_WALK;   break;
+        case 'jump':   frames = b ? A.B_JUMP   : A.S_JUMP;   break;
+        case 'skid':   frames = b ? A.B_SKID   : A.S_SKID;   break;
+        case 'crouch': frames = b ? A.B_CROUCH : A.S_CROUCH; break;
+        case 'fall':   frames = b ? A.B_FALL   : A.S_FALL;   break;
+        case 'die':    frames = A.S_DIE; break;
+        default:       frames = A.S_IDLE;
     }
     if (frames.length > 1) {
         this.animTimer += 1/60;
-        if (this.animTimer >= 0.1) { this.animTimer = 0; this.animFrame = (this.animFrame+1) % frames.length; }
+        var threshold = (this.state === 'walk' && !this._running) ? 0.25 : 0.08;
+        if (this.animTimer >= threshold) { this.animTimer = 0; this.animFrame = (this.animFrame+1) % frames.length; }
     }
     SPR.setSprite(this._spr, frames[this.animFrame % frames.length]);
 
@@ -191,13 +254,24 @@ Goomba.prototype.update = function(dt, level) {
     if (this.vy > CFG.MAX_FALL) this.vy = CFG.MAX_FALL;
     this.x += this.vx * dt;
     this.y += this.vy * dt;
-    level.resolveEntity(this);
-    // animate
+    var res = level.resolveEntity(this);
+    // only flip if actually moving into the wall
+    if ((res.right && this.vx > 0) || (res.left && this.vx < 0)) this.vx = -this.vx;
+    // animate (alternate flip on single walk frame)
     this.animTimer += dt;
     if (this.animTimer >= 0.25) { this.animTimer = 0; this.animFrame ^= 1; }
-    SPR.setSprite(this._spr, CFG.ANIM.G_WALK[this.animFrame]);
+    SPR.setSprite(this._spr, CFG.ANIM.G_WALK[0]);
 };
-Goomba.prototype.syncNode = function() { setNodePos(this._node, this.x, this.y); };
+Goomba.prototype.syncNode = function() {
+    if (!this.dead && this.animFrame) {
+        this._node.scaleX = -1;
+        this._node.x = this.x + this.w;
+    } else {
+        this._node.scaleX = 1;
+        this._node.x = this.x;
+    }
+    this._node.y = -this.y;
+};
 
 // ─── Turtle ───────────────────────────────────────────────────────────────
 function Turtle(parent, wx, wy) {
@@ -229,26 +303,45 @@ Turtle.prototype.stomp = function() {
 };
 Turtle.prototype.update = function(dt, level) {
     if (this.removed) return;
-    if (this.state === 'shell') {
-        this.shellTimer -= dt;
-        if (this.shellTimer <= 0) { this.state = 'walk'; this.vx = -80; }
-    }
+    // turtle stays in shell once stomped (no recovery)
     this.vy += CFG.GRAVITY * dt;
     if (this.vy > CFG.MAX_FALL) this.vy = CFG.MAX_FALL;
     this.x += this.vx * dt;
     this.y += this.vy * dt;
-    level.resolveEntity(this);
+    var res = level.resolveEntity(this);
+    if ((res.right && this.vx > 0) || (res.left && this.vx < 0)) this.vx = -this.vx;
     // animate
     if (this.state === 'walk') {
         this.animTimer += dt;
         if (this.animTimer >= 0.2) { this.animTimer = 0; this.animFrame ^= 1; }
         SPR.setSprite(this._spr, CFG.ANIM.T_WALK[this.animFrame]);
-        this._node.scaleX = (this.vx >= 0) ? 1 : -1;
-    } else {
+    } else if (this.state === 'shell') {
         SPR.setSprite(this._spr, CFG.ANIM.T_SHELL[0]);
+        this.animFrame = 0; this.animTimer = 0;
+    } else {
+        // slide — cycle through T_SLIDE frames (faster cycling for faster vx)
+        this.animTimer += dt;
+        if (this.animTimer >= 0.05) {
+            this.animTimer = 0;
+            this.animFrame = (this.animFrame + 1) % CFG.ANIM.T_SLIDE.length;
+        }
+        SPR.setSprite(this._spr, CFG.ANIM.T_SLIDE[this.animFrame]);
     }
 };
-Turtle.prototype.syncNode = function() { setNodePos(this._node, this.x, this.y); this._node.height = this.h; };
+Turtle.prototype.syncNode = function() {
+    this._node.anchorX = 0; this._node.anchorY = 1;
+    this._node.angle = 0;
+    // sprite faces left by default → flip only when moving right
+    if (this.vx > 0) {
+        this._node.scaleX = -1;
+        this._node.x = this.x + this.w;
+    } else {
+        this._node.scaleX = 1;
+        this._node.x = this.x;
+    }
+    this._node.y = -this.y;
+    this._node.height = this.h;
+};
 
 // ─── QuestionBlock ────────────────────────────────────────────────────────
 function QuestionBlock(parent, col, row, type) {
@@ -269,8 +362,8 @@ QuestionBlock.prototype.bump = function(game) {
     this.used = true;
     this.bumpTimer = 0.2;
     SPR.setSprite(this._spr, CFG.ANIM.Q_USED[0]);
+    // SFX is played inside spawnItem based on content type
     game.spawnItem(this);
-    AudioMgr.playSFX('powerUpAppear');
 };
 QuestionBlock.prototype.update = function(dt) {
     if (this.bumpTimer > 0) {
@@ -296,13 +389,25 @@ function BrickBlock(parent, col, row) {
     this.bumpTimer = 0; this.bumpY = 0;
     this._node = makeSpriteNode(parent, 'Brick', TS, TS);
     this._spr  = this._node.getComponent(cc.Sprite);
-    SPR.setSprite(this._spr, CFG.TILE_SPR[2]);
+    SPR.setSprite(this._spr, 'items_19.png');
 }
+BrickBlock.prototype._break = function(game) {
+    this._node.active = false;
+    this.removed = true;
+    AudioMgr.playSFX('stomp');
+    var lvl = game._level;
+    if (lvl) {
+        var cx = this.x;
+        var cy = this.y;
+        lvl._effects.push(new BrickDebris(lvl._worldNode, cx,        cy,        -160, -380));
+        lvl._effects.push(new BrickDebris(lvl._worldNode, cx + 16, cy,         160, -380));
+        lvl._effects.push(new BrickDebris(lvl._worldNode, cx,        cy + 16, -120, -260));
+        lvl._effects.push(new BrickDebris(lvl._worldNode, cx + 16, cy + 16,  120, -260));
+    }
+};
 BrickBlock.prototype.bump = function(player, game) {
-    if (player.big) {
-        this._node.active = false;
-        this.removed = true;
-        AudioMgr.playSFX('stomp');
+    if (player.big || player.state === 'fall') {
+        this._break(game);
     } else {
         this.bumpTimer = 0.2;
     }
@@ -367,3 +472,98 @@ ScorePopup.prototype.update = function(dt) {
     if (this.life <= 0) { this._node.active = false; this.removed = true; }
 };
 ScorePopup.prototype.syncNode = function() { setNodePos(this._node, this.x, this.y); };
+
+// ─── Coin (pop-out effect from question block) ────────────────────────────
+function Coin(parent, wx, wy) {
+    this.x = wx; this.y = wy;
+    this.startY = wy;
+    this.w = 28; this.h = 28;
+    this.vy = -500;
+    this.phase = 'pop';
+    this.life = 0.2;
+    this.animTimer = 0; this.animFrame = 0;
+    this._node = makeSpriteNode(parent, 'Coin', this.w, this.h);
+    this._spr  = this._node.getComponent(cc.Sprite);
+    SPR.setSprite(this._spr, CFG.ANIM.COIN[0]);
+}
+Coin.prototype.update = function(dt) {
+    if (this.phase === 'pop') {
+        // pop upward, gravity pulls back to origin
+        this.vy += CFG.GRAVITY * 2 * dt;
+        this.y += this.vy * dt;
+        // cycle through items_1/2/3
+        this.animTimer += dt;
+        if (this.animTimer >= 0.05) {
+            this.animTimer = 0;
+            this.animFrame = (this.animFrame + 1) % CFG.ANIM.COIN.length;
+            SPR.setSprite(this._spr, CFG.ANIM.COIN[this.animFrame]);
+        }
+        // returned to (or past) origin → switch to effect phase
+        if (this.y >= this.startY) {
+            this.y = this.startY;
+            this.phase = 'fx';
+            this.animTimer = 0;
+            this.animFrame = 0;
+            SPR.setSprite(this._spr, 'effects_0.png');
+        }
+    } else {
+        // play effects_0..3 once, then disappear
+        this.animTimer += dt;
+        if (this.animTimer >= 0.05) {
+            this.animTimer = 0;
+            this.animFrame++;
+            if (this.animFrame < 4) {
+                SPR.setSprite(this._spr, 'effects_' + this.animFrame + '.png');
+            } else {
+                this._node.active = false; this.removed = true;
+            }
+        }
+    }
+};
+Coin.prototype.syncNode = function() { setNodePos(this._node, this.x, this.y); };
+
+// ─── BrickDebris (4 pieces flying out when brick breaks) ──────────────────
+function BrickDebris(parent, wx, wy, vx, vy) {
+    this.x = wx; this.y = wy;
+    this.w = 18; this.h = 18;
+    this.vx = vx; this.vy = vy;
+    this.life = 0.8;
+    this._spin = (Math.random() < 0.5 ? -1 : 1) * (300 + Math.random() * 400);
+    // build node manually with center anchor (safer than mutating after add)
+    var n = new cc.Node('Debris');
+    n.anchorX = 0.5; n.anchorY = 0.5;
+    n.width = this.w; n.height = this.h;
+    var s = n.addComponent(cc.Sprite);
+    s.sizeMode = cc.Sprite.SizeMode.CUSTOM;
+    s.trim = false;
+    parent.addChild(n);
+    this._node = n;
+    this._spr  = s;
+    SPR.setSprite(s, 'items_19.png');
+}
+BrickDebris.prototype.update = function(dt) {
+    this.vy += CFG.GRAVITY * dt;
+    if (this.vy > CFG.MAX_FALL) this.vy = CFG.MAX_FALL;
+    this.x += this.vx * dt;
+    this.y += this.vy * dt;
+    this.life -= dt;
+    this._node.angle = (this._node.angle || 0) + this._spin * dt;
+    if (this.life <= 0) { this._node.active = false; this.removed = true; }
+};
+BrickDebris.prototype.syncNode = function() {
+    // center-anchored, so position at center
+    this._node.x = this.x + this.w / 2;
+    this._node.y = -(this.y + this.h / 2);
+};
+
+// Expose entity classes globally so other scripts can reference them
+window.Player = Player;
+window.Goomba = Goomba;
+window.Turtle = Turtle;
+window.QuestionBlock = QuestionBlock;
+window.BrickBlock = BrickBlock;
+window.Mushroom = Mushroom;
+window.StarItem = StarItem;
+window.ScorePopup = ScorePopup;
+window.Coin = Coin;
+window.BrickDebris = BrickDebris;

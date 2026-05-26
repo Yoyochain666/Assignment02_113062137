@@ -1,101 +1,169 @@
-/* HUD — fixed overlay on canvas (not in worldNode) */
+/* HUD — overlay on canvas, only visible during gameplay */
 
-var HUD = cc.Class({
-    name: 'HUD',
+window.HUD = cc.Class({
     extends: cc.Component,
 
     properties: {
-        _bgNode:     null,
-        _scoreLabel: null,
-        _coinLabel:  null,
-        _livesLabel: null,
-        _timerLabel: null,
-        _worldLabel: null,
-        _muteLabel:  null,
-        _msgLabel:   null,
+        _container:   null,
+        _scoreLabel:  null,
+        _coinLabel:   null,
+        _livesLabel:  null,
+        _timerLabel:  null,
+        _worldLabel:  null,
+        _muteLabel:   null,
+        _msgLabel:    null,
     },
 
     init: function(canvasNode) {
-        var H = CFG.HUD_H, W = CFG.W;
+        var H = CFG.HUD_H;
+        var cw = canvasNode.width;
+        var ch = canvasNode.height;
+        var topY = ch / 2;
+        var cy = topY - H / 2;
 
-        // black bar background
-        var bg = new cc.Node('hudbg');
-        bg.anchorX = 0; bg.anchorY = 1;
-        bg.x = -W/2; bg.y = H/2;
-        bg.width = W; bg.height = H;
-        bg.color = cc.Color.BLACK;
-        var bgSpr = bg.addComponent(cc.Sprite);
-        bgSpr.type = cc.Sprite.Type.FILLED;
-        canvasNode.addChild(bg);
-        this._bgNode = bg;
+        // single container so setVisible toggles everything
+        var container = new cc.Node('hud');
+        container.anchorX = 0; container.anchorY = 0;
+        container.x = 0; container.y = 0;
+        canvasNode.addChild(container, 100);
+        this._container = container;
 
-        var makeLabel = function(parent, text, x, y, size, align) {
+        var FONTS = window.FONTS || {};
+        // yellow_font.fnt is missing chars 0 and 9 — use white_font with tint instead
+        var whiteFont  = FONTS.white_font;
+        var YELLOW = cc.color(255, 220, 0);
+
+        function makeBmLabel(parent, text, x, y, color, size) {
             var n = new cc.Node();
             n.anchorX = 0; n.anchorY = 0.5;
             n.x = x; n.y = y;
+            n.color = color || cc.Color.WHITE;
             var lbl = n.addComponent(cc.Label);
+            if (whiteFont) { lbl.font = whiteFont; lbl.useSystemFont = false; }
             lbl.string = text;
-            lbl.fontSize = size || 16;
-            lbl.horizontalAlign = align || cc.Label.HorizontalAlign.LEFT;
-            n.color = cc.Color.WHITE;
+            lbl.fontSize = size || 24;
+            lbl.lineHeight = size || 24;
+            lbl.horizontalAlign = cc.Label.HorizontalAlign.LEFT;
             parent.addChild(n);
             return lbl;
-        };
+        }
+        function makeIcon(parent, frameName, x, y, w, h) {
+            var n = new cc.Node();
+            n.anchorX = 0; n.anchorY = 0.5;   // left-anchored, vertically centered at y
+            n.x = x; n.y = y;
+            n.width = w; n.height = h;
+            var s = n.addComponent(cc.Sprite);
+            s.sizeMode = cc.Sprite.SizeMode.CUSTOM;
+            s.trim = false;
+            var f = SPR.getFrame(frameName);
+            if (f) s.spriteFrame = f;
+            parent.addChild(n);
+            return n;
+        }
 
-        // Positions relative to Canvas center
-        // HUD bar: top of canvas = y=+240, HUD center y = 240 - HUD_H/2 = 216
-        var hudY = H/2 - 8;   // within bg node local space
-        // use canvas-space positions (all children of canvasNode, CC center origin)
-        var cy = 240 - H/2;   // y in canvas space = 216
+        var leftPad = 30;
+        var sec = (cw - leftPad * 2) / 5;
+        var c0 = -cw / 2 + leftPad;
+        var c1 = c0 + sec;
+        var c2 = c0 + sec * 2;
+        var c3 = c0 + sec * 3;
+        var c4 = c0 + sec * 4;
 
-        // "MARIO" title + score
-        this._scoreLabel  = makeLabel(canvasNode, '000000', -W/2 + 10, cy + 8,  14);
-        makeLabel(canvasNode, 'MARIO', -W/2 + 10, cy - 8, 12);
+        var sz = 72;
+        var ic = 24;
+        var gap = 6;
+        // BMFont draws chars at top of line → shift label down so its visual center matches cy
+        var labelY = cy - sz * 0.08;
+        var iconY = cy + sz * 0.32;
 
-        // COINS
-        this._coinLabel   = makeLabel(canvasNode, 'x00', -W/2 + 250, cy + 8, 14);
-        makeLabel(canvasNode, 'COINS', -W/2 + 250, cy - 8, 12);
+        // Layout order: WORLD, TIMER, COIN, LIVES, SCORE
+        // WORLD — text only
+        this._worldLabel = makeBmLabel(container, 'WORLD1', c0, labelY, cc.Color.WHITE, sz);
 
-        // WORLD
-        this._worldLabel  = makeLabel(canvasNode, '1-1', -W/2 + 390, cy + 8, 14);
-        makeLabel(canvasNode, 'WORLD', -W/2 + 390, cy - 8, 12);
+        // TIME — timer icon (left) + count (right)
+        makeIcon(container, 'timer', c1, iconY, ic, ic);
+        this._timerLabel = makeBmLabel(container, '400', c1 + ic + gap, labelY, cc.Color.WHITE, sz);
 
-        // TIME
-        this._timerLabel  = makeLabel(canvasNode, '400', -W/2 + 530, cy + 8, 14);
-        makeLabel(canvasNode, 'TIME',  -W/2 + 530, cy - 8, 12);
+        // COIN — coin icon (left) + count (right)
+        makeIcon(container, 'items_1.png', c2, iconY, ic, ic);
+        this._coinLabel  = makeBmLabel(container, 'x00', c2 + ic + gap, labelY, YELLOW, sz);
 
-        // LIVES
-        this._livesLabel  = makeLabel(canvasNode, 'x3', -W/2 + 670, cy + 8, 14);
-        makeLabel(canvasNode, 'LIVES', -W/2 + 670, cy - 8, 12);
+        // LIVES — life icon (left) + count (right)
+        makeIcon(container, 'life', c3, iconY, ic, ic);
+        this._livesLabel = makeBmLabel(container, 'x3', c3 + ic + gap, labelY, YELLOW, sz);
 
-        // Mute indicator
-        this._muteLabel   = makeLabel(canvasNode, '', -W/2 + 760, cy, 13);
+        // SCORE — number only (yellow tint)
+        this._scoreLabel = makeBmLabel(container, '000000', c4, labelY, YELLOW, sz);
 
-        // Center message (pause / game state)
+        // Mute indicator — aligned to top-right corner of canvas
+        var muteNode = new cc.Node('mute');
+        muteNode.anchorX = 0.5; muteNode.anchorY = 0.5;
+        muteNode.x = cw / 2 - 20;   // 40px from right edge
+        muteNode.y = topY - 20;     // 40px from top edge
+        muteNode.scale = 0.8;
+        this._muteGfx = muteNode.addComponent(cc.Graphics);
+        container.addChild(muteNode);
+        this._drawMuteIcon(false);
+
+        // Center message (pause / state)
         var msgNode = new cc.Node('msg');
         msgNode.anchorX = 0.5; msgNode.anchorY = 0.5;
         msgNode.x = 0; msgNode.y = 0;
         var msg = msgNode.addComponent(cc.Label);
+        if (whiteFont) { msg.font = whiteFont; msg.useSystemFont = false; }
         msg.string = '';
-        msg.fontSize = 28;
+        msg.fontSize = 48;
+        msg.lineHeight = 48;
         msg.horizontalAlign = cc.Label.HorizontalAlign.CENTER;
-        msgNode.color = cc.Color.WHITE;
-        canvasNode.addChild(msgNode);
+        canvasNode.addChild(msgNode, 101);
         this._msgLabel = msg;
     },
 
-    update: function(score, coins, lives, time, muted, msg) {
-        this._scoreLabel.string  = String(score).padStart(6, '0');
-        this._coinLabel.string   = 'x' + String(coins).padStart(2, '0');
-        this._livesLabel.string  = 'x' + lives;
+    refresh: function(score, coins, lives, time, muted, msg) {
+        this._scoreLabel.string = String(score).padStart(6, '0');
+        this._coinLabel.string  = 'x' + String(coins).padStart(2, '0');
+        this._livesLabel.string = 'x' + lives;
+        this._worldLabel.string = 'WORLD1';
         var t = Math.max(0, Math.ceil(time));
-        this._timerLabel.string  = String(t).padStart(3, '0');
-        this._timerLabel.node.color = t < 100 ? cc.color(255,50,50) : cc.Color.WHITE;
-        this._muteLabel.string   = muted ? 'M' : '';
-        this._msgLabel.string    = msg || '';
+        this._timerLabel.string = String(t).padStart(3, '0');
+        this._timerLabel.node.color = t < 100 ? cc.color(255, 60, 60) : cc.Color.WHITE;
+        if (this._muteGfx) this._drawMuteIcon(muted);
+        this._msgLabel.string   = msg || '';
+    },
+
+    _drawMuteIcon: function(muted) {
+        var g = this._muteGfx;
+        g.clear();
+        g.fillColor = cc.Color.WHITE;
+        // speaker body (small rectangle on the left)
+        g.rect(-15, -7, 8, 14);
+        g.fill();
+        // speaker cone (triangle to the right)
+        g.moveTo(-7, 7);
+        g.lineTo(10, 16);
+        g.lineTo(10, -16);
+        g.lineTo(-7, -7);
+        g.close();
+        g.fill();
+        // sound waves OR red slash
+        if (muted) {
+            g.strokeColor = cc.color(255, 40, 40);
+            g.lineWidth = 5;
+            g.moveTo(-20, -18);
+            g.lineTo(20, 18);
+            g.stroke();
+        } else {
+            g.strokeColor = cc.Color.WHITE;
+            g.lineWidth = 3;
+            // two small arcs to represent sound
+            g.moveTo(14, -6); g.lineTo(18, 0); g.lineTo(14, 6);
+            g.stroke();
+            g.moveTo(18, -10); g.lineTo(23, 0); g.lineTo(18, 10);
+            g.stroke();
+        }
     },
 
     setVisible: function(v) {
-        this._bgNode.active = v;
+        if (this._container) this._container.active = v;
     },
 });

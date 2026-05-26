@@ -1,6 +1,6 @@
 // Game-wide constants
 window.CFG = {
-    W: 800, H: 480, HUD_H: 48, GAME_H: 432,
+    W: 1280, H: 720, HUD_H: 72, GAME_H: 648,
     TS: 32, SCALE: 2,
     GRAVITY: 1600,
     JUMP_VY: 580,       // positive = up in CC
@@ -15,19 +15,24 @@ window.CFG = {
 
     // sprite frame names (with .png suffix as stored in plist)
     ANIM: {
-        S_IDLE: ['mario_small_0.png'],
-        S_WALK: ['mario_small_1.png','mario_small_2.png','mario_small_3.png'],
-        S_JUMP: ['mario_small_4.png'],
-        S_DIE:  ['mario_small_10.png'],
-        S_SKID: ['mario_small_9.png'],
-        B_IDLE: ['mario_big_0.png'],
-        B_WALK: ['mario_big_1.png','mario_big_2.png','mario_big_3.png'],
-        B_JUMP: ['mario_big_4.png'],
-        B_SKID: ['mario_big_9.png'],
-        G_WALK: ['Goomba_0.png','Goomba_1.png'],
-        G_DEAD: ['Goomba_2.png'],
+        S_IDLE:  ['mario_small_8.png'],
+        S_WALK:  ['mario_small_1.png','mario_small_2.png','mario_small_3.png'],
+        S_JUMP:  ['mario_small_4.png'],
+        S_DIE:   ['mario_small_10.png'],
+        S_SKID:  ['mario_small_9.png'],
+        S_CROUCH:['mario_small_28.png'],   // (6,0) 0-base
+        S_FALL:  ['mario_small_15.png'],   // (2,0) 0-base — ground-pound / fast fall
+        B_IDLE:  ['mario_big0.png'],
+        B_WALK:  ['mario_big0.png','mario_big1.png'],
+        B_JUMP:  ['mario_big2.png'],
+        B_SKID:  ['mario_big0.png'],
+        B_CROUCH:['mario_big3.png'],
+        B_FALL:  ['mario_big4.png'],
+        G_WALK: ['Goomba_0.png'],   // single frame, flip horizontally for 2-frame animation
+        G_DEAD: ['Goomba_1.png'],
         T_WALK: ['turtle_0.png','turtle_1.png'],
-        T_SHELL:['turtle_2.png'],
+        T_SHELL:['turtle_5.png'],
+        T_SLIDE:['turtle_2.png','turtle_3.png','turtle_4.png'],
         Q_ANIM: ['items_10.png','items_11.png','items_12.png','items_13.png'],
         Q_USED: ['items_14.png'],
         MUSH:   ['items_46.png'],

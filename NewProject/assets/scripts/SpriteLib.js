@@ -7,8 +7,12 @@ window.SPR = {
     },
 
     getFrame: function(frameName) {
+        var stripped = frameName.replace(/\.png$/, '');
         for (var key in this._atlases) {
-            var f = this._atlases[key].getSpriteFrame(frameName);
+            var atlas = this._atlases[key];
+            var f = atlas.getSpriteFrame(frameName);
+            if (f) return f;
+            f = atlas.getSpriteFrame(stripped);
             if (f) return f;
         }
         cc.warn('SpriteLib: frame not found:', frameName);

@@ -1,8 +1,7 @@
 /* Master game controller CC component.
    Manages: game state machine, player, level, HUD, scene overlays. */
 
-var Game = cc.Class({
-    name: 'Game',
+window.Game = cc.Class({
     extends: cc.Component,
 
     // ── lifecycle ─────────────────────────────────────────────────────────
@@ -63,10 +62,22 @@ var Game = cc.Class({
         var bg = new cc.Node('sky');
         bg.anchorX = 0.5; bg.anchorY = 0.5;
         bg.x = 0; bg.y = 0;
-        bg.width = CFG.W; bg.height = CFG.H;
-        bg.color = cc.color(92, 148, 252);  // Mario sky blue
+        bg.width = 4000;
+        bg.height = 3000;
+        var spr = bg.addComponent(cc.Sprite);
+        spr.sizeMode = cc.Sprite.SizeMode.CUSTOM;
+        spr.trim = false;
+        // Use any tile sprite as a solid fill (we'll tint it)
+        var fallback = SPR.getFrame('tiles_2.png') || SPR.getFrame('tiles_9.png');
+        if (fallback) spr.spriteFrame = fallback;
         canvasNode.addChild(bg, -10);
         this._bgNode = bg;
+        this._bgSprite = spr;
+        this._setBgColor(92, 148, 252);
+    },
+
+    _setBgColor: function(r, g, b) {
+        this._bgNode.color = cc.color(r, g, b);
     },
 
     // ── HUD ───────────────────────────────────────────────────────────────
@@ -131,23 +142,28 @@ var Game = cc.Class({
         this._state = 'MENU';
         this._clearOverlay();
         this._clearWorld();
-        this._bgNode.color = cc.color(0, 0, 0);
+        this._setBgColor(0, 0, 0);
 
-        // Try to show menu_bg sprite
+        // menu background image
         var bg = new cc.Node('menubg');
         bg.anchorX = 0.5; bg.anchorY = 0.5;
         bg.x = 0; bg.y = 0;
-        bg.width = CFG.W; bg.height = CFG.H;
+        bg.width = 1280; bg.height = 720;
         var spr = bg.addComponent(cc.Sprite);
-        var frame = SPR.getFrame ? null : null;
+        spr.sizeMode = cc.Sprite.SizeMode.CUSTOM;
+        spr.trim = false;
+        var bgFrame = SPR.getFrame('menu_bg') || SPR.getFrame('menu_bg.png');
+        if (bgFrame) spr.spriteFrame = bgFrame;
         this._overlayNode.addChild(bg, -5);
 
         var title0 = new cc.Node('t0');
         title0.anchorX = 0.5; title0.anchorY = 0.5;
         title0.x = 0; title0.y = 80;
-        title0.width = 256; title0.height = 60;
+        title0.width = 320; title0.height = 80;
         var s0 = title0.addComponent(cc.Sprite);
-        var f0 = SPR.getFrame('title_0.png');
+        s0.sizeMode = cc.Sprite.SizeMode.CUSTOM;
+        s0.trim = false;
+        var f0 = SPR.getFrame('title_0') || SPR.getFrame('title_0.png');
         if (f0) s0.spriteFrame = f0;
         this._overlayNode.addChild(title0);
 
@@ -158,14 +174,14 @@ var Game = cc.Class({
 
         AudioMgr.playBGM('bgm2');
         this._hud.setVisible(false);
-        this._hud.update(0,0,this._lives,CFG.TIMER,AudioMgr.isMuted(),'');
+        this._hud.refresh(0,0,this._lives,CFG.TIMER,AudioMgr.isMuted(),'');
     },
 
     // ── LEVEL SELECT screen ───────────────────────────────────────────────
     _showLevelSelect: function() {
         this._state = 'LEVEL_SELECT';
         this._clearOverlay();
-        this._bgNode.color = cc.color(0, 0, 0);
+        this._setBgColor(0, 0, 0);
 
         this._makeLabel(this._overlayNode, 'SELECT LEVEL', 140, 32);
         this._makeLabel(this._overlayNode, 'WORLD 1-1', 50, 28, cc.color(255, 220, 0));
@@ -182,7 +198,7 @@ var Game = cc.Class({
         this._time   = CFG.TIMER;
         this._camX   = 0;
         this._minCamX = 0;
-        this._bgNode.color = cc.color(92, 148, 252);
+        this._setBgColor(92, 148, 252);
         this._hud.setVisible(true);
         this._buildWorld();
         this._state = 'PLAYING';
@@ -194,7 +210,7 @@ var Game = cc.Class({
         this._clearWorld();
         this._camX = 0; this._minCamX = 0;
         this._time = CFG.TIMER;
-        this._bgNode.color = cc.color(92, 148, 252);
+        this._setBgColor(92, 148, 252);
         this._buildWorld();
         this._state = 'PLAYING';
         this._timerOn = true;
@@ -205,7 +221,9 @@ var Game = cc.Class({
     _buildWorld: function() {
         var wn = new cc.Node('world');
         wn.anchorX = 0; wn.anchorY = 1;
-        wn.x = -CFG.W/2; wn.y = CFG.H/2 - CFG.HUD_H;
+        wn.x = -CFG.W/2;
+        // align ground to bottom of visible screen
+        wn.y = -CFG.H/2 + LevelData.ROWS * CFG.TS;
         this._canvasNode.addChild(wn, 0);
         this._worldNode = wn;
 
@@ -261,9 +279,8 @@ var Game = cc.Class({
             // flag check
             if (!p.dead && p.x >= LevelData.flagCol * CFG.TS) this._levelClear();
 
-            // camera
-            var targetCam = p.x - 300;
-            if (targetCam > this._camX) this._camX = targetCam;
+            // camera (follows player both directions, clamped to level bounds)
+            this._camX = p.x - CFG.W * 0.35;
             if (this._camX < this._minCamX) this._camX = this._minCamX;
             var maxCam = LevelData.COLS * CFG.TS - CFG.W;
             if (this._camX > maxCam) this._camX = maxCam;
@@ -289,7 +306,7 @@ var Game = cc.Class({
         p.syncNode();
 
         // HUD
-        this._hud.update(this._score, this._coins, this._lives, this._time,
+        this._hud.refresh(this._score, this._coins, this._lives, this._time,
                          AudioMgr.isMuted(), this._paused ? 'PAUSED' : '');
     },
 
@@ -320,6 +337,7 @@ var Game = cc.Class({
         if (this._state === 'LEVEL_CLEAR') return;
         this._state = 'LEVEL_CLEAR';
         this._timerOn = false;
+        this._hud.setVisible(false);
         AudioMgr.stopBGM();
         AudioMgr.playSFX('levelClear');
 
@@ -336,14 +354,14 @@ var Game = cc.Class({
     // ── GAME OVER ─────────────────────────────────────────────────────────
     _gameOver: function() {
         this._state = 'GAME_OVER';
+        this._hud.setVisible(false);
         AudioMgr.stopBGM();
         AudioMgr.playSFX('gameover');
         this._clearWorld();
         this._clearOverlay();
-        this._bgNode.color = cc.color(0,0,0);
+        this._setBgColor(0, 0, 0);
         this._makeLabel(this._overlayNode, 'GAME OVER', 60, 48, cc.color(255,50,50));
         this._makeLabel(this._overlayNode, 'SCORE: ' + String(this._score).padStart(6,'0'), -10, 24);
         this._makeLabel(this._overlayNode, 'Press SPACE to return to Menu', -70, 16, cc.color(200,200,200));
-        this._hud.update(this._score, this._coins, 0, 0, AudioMgr.isMuted(), '');
     },
 });
